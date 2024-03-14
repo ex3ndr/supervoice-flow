@@ -30,7 +30,7 @@ from model.tensors import count_parameters, probability_binary_mask, drop_using_
 from training.dataset import load_distorted_loader
 
 # Train parameters
-train_experiment = "exp-01"
+train_experiment = "exp-02"
 train_project="supervoice-effector"
 train_datasets = [
     "./external_datasets/libritts-r-clean-100/", 
@@ -91,7 +91,7 @@ def main():
     for param in model.parameters():
         param_list = no_wd_params if param.ndim < 2 else wd_params
         param_list.append(param)
-    optim = torch.optim.AdamW([{'params': wd_params}, {'params': no_wd_params, 'weight_decay': 0}], lr_max, betas=[0.9, 0.99], weight_decay=0.01)
+    optim = torch.optim.AdamW([{'params': wd_params}, {'params': no_wd_params, 'weight_decay': 0}], lr_max, betas=[0.9, 0.99], weight_decay=0.01, eps=1e-7)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max = train_steps)
 
     # Accelerate
@@ -185,9 +185,9 @@ def main():
                     # Prepare target flow (CFM)
                     times = torch.rand((batch_size,), dtype = spec.dtype, device = device)
                     t = rearrange(times, 'b -> b 1 1')
-                    noise = torch.randn_like(spec, device=device)
-                    noise = (1 - (1 - train_sigma) * t) * noise + t * spec
-                    flow = spec - (1 - train_sigma) * noise
+                    source_noise = torch.randn_like(spec, device=device)
+                    noise = (1 - (1 - train_sigma) * t) * source_noise + t * spec
+                    flow = spec - (1 - train_sigma) * source_noise
 
                     # Prepare mask (segments that are needed to be predicted)
                     # 70% - 100% of sequence, and 30% probability of masking everything
