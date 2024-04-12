@@ -9,7 +9,7 @@ from .tensors import drop_using_mask, merge_mask
 
 class AudioFlow(torch.nn.Module):
     def __init__(self, config):
-        super(AudioEffector, self).__init__()
+        super(AudioFlow, self).__init__()
         self.config = config.model
 
         # Transformer input
