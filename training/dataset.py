@@ -17,6 +17,7 @@ def load_clean_sampler(datasets, duration, return_source = False):
         dataset_files = list(Path(dataset).rglob("*.wav")) + list(Path(dataset).rglob("*.flac"))
         dataset_files = [str(p) for p in dataset_files]
         files += dataset_files
+    print(f"Loaded {len(files)} files from {len(datasets)} datasets")
 
     # Sample a single item
     def sample_item():
