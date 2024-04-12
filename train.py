@@ -26,11 +26,11 @@ import wandb
 # Local
 from model.config import config
 from model.model import AudioFlow
-from model.tensors import count_parameters, probability_binary_mask, drop_using_mask, interval_mask
+from model.tensors import count_parameters, probability_binary_mask, drop_using_mask, random_interval_masking
 from training.dataset import load_distorted_loader, load_clean_loader
 
 # Train parameters
-train_experiment = "large-01"
+train_experiment = "large-02"
 train_project="supervoice-flow"
 train_datasets = "./external_datasets/librilight-large-processed/"
 train_eval_datasets = [
@@ -68,7 +68,7 @@ def main():
     dtype = torch.float16 if train_mixed_precision == "fp16" else (torch.bfloat16 if train_mixed_precision == "bf16" else torch.float32)
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True 
-    set_seed(42)
+    # set_seed(42) enabling this would force each GPU to have same samples
     lr_start = train_lr_start * accelerator.num_processes
     lr_max = train_lr_max * accelerator.num_processes
 
@@ -196,9 +196,9 @@ def main():
                     noise = (1 - (1 - train_sigma) * t) * source_noise + t * spec
                     flow = spec - (1 - train_sigma) * source_noise
 
-                    # Prepare mask (segments that are needed to be predicted)
-                    # 70% - 100% of sequence, and 30% probability of masking everything
-                    mask = interval_mask(batch_size, seq_len, int(seq_len * 0.7), seq_len, 0.3, device)
+                    # Masking 
+                    # 70% - 100% of the sequence is masked, with segments of at least 10 frames
+                    mask = random_interval_masking(batch_size, seq_len, min_size = 10, min_count = int(seq_len * 0.7), max_count = seq_len, device = device)
 
                     # Prepare condition spec
                     if not train_clean:
@@ -207,7 +207,7 @@ def main():
                         condition_spec = drop_using_mask(source = spec, replacement = 0, mask = mask)
 
                     # Drop everything for unconditional generation
-                    # 0.2 probability of dropping everything
+                    # 0.15 probability of zero spectogram
                     conditional_drop_mask = probability_binary_mask(shape = (batch_size,), true_prob = 0.15, device = device)
                     condition_spec = drop_using_mask(source = condition_spec, replacement = 0, mask = conditional_drop_mask)
 

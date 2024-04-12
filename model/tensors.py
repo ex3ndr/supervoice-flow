@@ -33,13 +33,33 @@ def merge_mask(source, replacement, mask):
         mask = mask.unsqueeze(-1)
     return torch.where(mask, replacement, source)
 
-def interval_mask(batch_size, length, min_interval, max_interval, probability_all, device):
-    tensor = torch.full((batch_size, length), False, device = device, dtype = torch.bool)
+def random_interval_masking(batch_size, length, *, min_size, min_count, max_count, device):
+    tensor = torch.full((batch_size, length), False, device=device, dtype=torch.bool)
     for i in range(batch_size):
-        interval_length = random.randint(min_interval, max_interval)
-        if random.random() < probability_all or interval_length == length:
-            tensor[i] = True
-            continue
-        start_point = random.randint(0, length - interval_length - 1)
-        tensor[i, start_point:start_point + interval_length] = True 
+
+        # Expected sum of all intervals
+        expected_length = random.randint(min_count, max_count)
+
+        # Number of intervals
+        num_intervals = random.randint(1, expected_length // min_size)
+
+        # Generate interval lengths
+        lengths = [min_size] * num_intervals
+        for _ in range(expected_length - num_intervals * min_size):
+            lengths[random.randint(0, num_intervals - 1)] += 1
+
+        # Generate start points
+        placements = []
+        offset = 0
+        remaining = expected_length
+        for l in lengths:
+            start_position = random.uniform(offset, remaining - l)
+            placements.append(start_position)
+            offset = start_position + l
+            remaining -= l
+
+        # Write to tensor
+        for l, p in zip(lengths, placements):
+            tensor[i, int(p):int(p + l)] = True
+
     return tensor
