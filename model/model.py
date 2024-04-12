@@ -7,7 +7,7 @@ from torchdiffeq import odeint
 from .transformer import Transformer, ConvPositionEmbed
 from .tensors import drop_using_mask, merge_mask
 
-class AudioEffector(torch.nn.Module):
+class AudioFlow(torch.nn.Module):
     def __init__(self, config):
         super(AudioEffector, self).__init__()
         self.config = config.model
@@ -36,7 +36,7 @@ class AudioEffector(torch.nn.Module):
         # Prediction
         self.prediction = torch.nn.Linear(self.config.n_dim, config.audio.n_mels)
 
-    def sample(self, *, audio, mask = None, steps, alpha = None):
+    def sample(self, *, audio, mask = None, steps, alpha = None, return_trajectory = False):
         
         #
         # Prepare
@@ -120,7 +120,8 @@ class AudioEffector(torch.nn.Module):
 
         # Training    
         mask = None,
-        target = None
+        target = None,
+        mask_loss = False
     ):
         
         #
@@ -179,13 +180,17 @@ class AudioEffector(torch.nn.Module):
             loss = reduce(loss, 'b n d -> b n', 'mean')
 
             # Mask out non target frames
-            loss = loss.masked_fill(~mask, 0.)
+            if mask_loss:
+                loss = loss.masked_fill(~mask, 0.)
 
-            # Number of masked frames
-            n_masked_frames = mask.sum(dim = -1).clamp(min = 1)
+                # Number of masked frames
+                n_masked_frames = mask.sum(dim = -1).clamp(min = 1)
 
-            # Mean loss of expectation over masked loss
-            loss = loss.sum(dim = -1) / n_masked_frames
+                # Mean loss of expectation over masked loss
+                loss = loss.sum(dim = -1) / n_masked_frames
+            else:
+                # Mean loss of expectation over each frame
+                loss = loss.sum(dim = -1) / mask.shape[1]
 
             # Expectation over loss of batch
             loss = loss.mean()

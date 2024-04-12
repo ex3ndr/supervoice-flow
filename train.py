@@ -25,35 +25,32 @@ import wandb
 
 # Local
 from model.config import config
-from model.model_audio import AudioEffector
+from model.model import AudioFlow
 from model.tensors import count_parameters, probability_binary_mask, drop_using_mask, interval_mask
-from training.dataset import load_distorted_loader
+from training.dataset import load_distorted_loader, load_clean_loader
 
 # Train parameters
-train_experiment = "exp-02"
-train_project="supervoice-effector"
+train_experiment = "large-01"
+train_project="supervoice-flow"
 train_datasets = [
-    "./external_datasets/libritts-r-clean-100/", 
-    "./external_datasets/libritts-r-clean-360/", 
-    "./external_datasets/lj-speech-1.1/",
-    "./external_datasets/vctk-corpus-0.92/"
+    "./external_datasets/librilight-preprocessed-large/"
 ]
 train_eval_datasets = [
     "./external_datasets/libritts-r/test-clean/"
 ]
-train_duration = 5 # seconds
+train_duration = 5 # seconds, 5s x 16 (batches) = 80s per GPU, which is 5s bigger than original paper
 train_source_experiment = None
 train_auto_resume = True
 train_batch_size = 16 # Per GPU
-train_grad_accum_every = 8
-train_steps = 1000000
+train_clean = True
+train_grad_accum_every = 16 # 16x2 = 32 GPU to match paper
+train_steps = 600000 # Directly matches paper
 train_loader_workers = 8
 train_log_every = 1
 train_save_every = 1000
 train_watch_every = 1000
 train_evaluate_every = 1
 train_evaluate_batch_size = 10
-train_max_segment_size = 500
 train_lr_start = 1e-7
 train_lr_max = 2e-5
 train_warmup_steps = 5000
@@ -79,13 +76,17 @@ def main():
 
     # Prepare dataset
     accelerator.print("Loading dataset...")
-    train_loader = load_distorted_loader(datasets = train_datasets, duration = train_duration, num_workers = train_loader_workers, batch_size = train_batch_size)
-    test_loader = load_distorted_loader(datasets = train_eval_datasets, duration = train_duration, num_workers = train_loader_workers, batch_size = train_batch_size)
+    if train_clean:
+        train_loader = load_clean_loader(datasets = train_datasets, duration = train_duration, num_workers = train_loader_workers, batch_size = train_batch_size)
+        test_loader = load_clean_loader(datasets = train_eval_datasets, duration = train_duration, num_workers = train_loader_workers, batch_size = train_batch_size)
+    else:
+        train_loader = load_distorted_loader(datasets = train_datasets, duration = train_duration, num_workers = train_loader_workers, batch_size = train_batch_size)
+        test_loader = load_distorted_loader(datasets = train_eval_datasets, duration = train_duration, num_workers = train_loader_workers, batch_size = train_batch_size)
 
     # Prepare model
     accelerator.print("Loading model...")
     step = 0
-    raw_model = AudioEffector(config)
+    raw_model = AudioFlow(config)
     model = raw_model
     wd_params, no_wd_params = [], []
     for param in model.parameters():
@@ -171,16 +172,24 @@ def main():
             lr = scheduler.get_last_lr()[0] / accelerator.num_processes
 
         # Load batch
-        for _ in range(train_grad_accum_every):
+        successful_cycles = 0
+        failed_steps = 0
+        while successful_cycles < train_grad_accum_every:
             with accelerator.accumulate(model):
                 with accelerator.autocast():
-                    spec, spec_aug, wav, wav_aug = next(train_cycle)
+                    if train_clean:
+                        spec = next(train_cycle)
+                    else:
+                        spec, spec_aug = next(train_cycle)
+
+                    # Prepare batch
                     batch_size = spec.shape[0]
                     seq_len = spec.shape[1]
 
                     # Normalize spectograms
                     spec = (spec - config.audio.norm_mean) / config.audio.norm_std
-                    spec_aug = (spec_aug - config.audio.norm_mean) / config.audio.norm_std
+                    if not train_clean:
+                        spec_aug = (spec_aug - config.audio.norm_mean) / config.audio.norm_std
 
                     # Prepare target flow (CFM)
                     times = torch.rand((batch_size,), dtype = spec.dtype, device = device)
@@ -193,8 +202,11 @@ def main():
                     # 70% - 100% of sequence, and 30% probability of masking everything
                     mask = interval_mask(batch_size, seq_len, int(seq_len * 0.7), seq_len, 0.3, device)
 
-                    # Mix augment and clean audio depending on mask
-                    condition_spec = drop_using_mask(source = spec_aug, replacement = 0, mask = ~mask) + drop_using_mask(source = spec, replacement = 0, mask = mask)
+                    # Prepare condition spec
+                    if not train_clean:
+                        condition_spec = torch.where(mask.unsqueeze(-1), spec_aug, spec)
+                    else:
+                        condition_spec = drop_using_mask(source = spec, replacement = 0, mask = mask)
 
                     # Drop everything for unconditional generation
                     # 0.2 probability of dropping everything
@@ -213,12 +225,9 @@ def main():
 
                         # Loss
                         mask = mask, 
-                        target = flow
+                        target = flow,
+                        mask_loss = False # Mathces the paper
                     )
-
-                    # # Check if loss is nan
-                    # if torch.isnan(loss) and accelerator.is_main_process:
-                    #     raise RuntimeError("Loss is NaN")
 
                     # Backprop
                     optim.zero_grad()
@@ -229,7 +238,16 @@ def main():
 
                     # Log skipping step
                     if optim.step_was_skipped:
-                        accelerator.print("Step was skipped")
+                        failed_steps = failed_steps + 1
+                        if torch.isnan(loss).any():
+                            accelerator.print("Step was skipped with NaN loss")
+                        else:
+                            accelerator.print("Step was skipped")
+                        if failed_steps > 20:
+                            raise Exception("Too many failed steps")
+                    else:
+                        successful_cycles = successful_cycles + 1
+                        failed_steps = 0
 
         return loss, predicted, flow, lr
 
