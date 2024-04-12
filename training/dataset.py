@@ -16,7 +16,7 @@ def load_clean_sampler(datasets, duration, return_source = False):
     if isinstance(datasets, str):
         with open(datasets + "files_all.txt", 'r') as file:
             dataset_files = file.read().splitlines()
-        dataset_files = [datasets + p for p in dataset_files]
+        dataset_files = [datasets + p + ".flac" for p in dataset_files]
     else:
         dataset_files = []
         for dataset in datasets:
