@@ -13,11 +13,17 @@ def load_clean_sampler(datasets, duration, return_source = False):
 
     # Load the datasets
     files = []
-    for dataset in datasets:
-        dataset_files = list(Path(dataset).rglob("*.wav")) + list(Path(dataset).rglob("*.flac"))
+    if isinstance(datasets, str):
+        with open(datasets + "files_all.txt", 'r') as file:
+            dataset_files = file.read().splitlines()
+        dataset_files = [datasets + p for p in dataset_files]
+    else:
+        dataset_files = []
+        for dataset in datasets:
+            dataset_files += list(Path(dataset).rglob("*.wav")) + list(Path(dataset).rglob("*.flac"))
         dataset_files = [str(p) for p in dataset_files]
-        files += dataset_files
-    print(f"Loaded {len(files)} files from {len(datasets)} datasets")
+    files += dataset_files
+    print(f"Loaded {len(files)} files")
 
     # Sample a single item
     def sample_item():

@@ -32,9 +32,7 @@ from training.dataset import load_distorted_loader, load_clean_loader
 # Train parameters
 train_experiment = "large-01"
 train_project="supervoice-flow"
-train_datasets = [
-    "./external_datasets/librilight-large-processed/"
-]
+train_datasets = "./external_datasets/librilight-large-processed/"
 train_eval_datasets = [
     "./external_datasets/libritts-r/test-clean/"
 ]
