@@ -24,26 +24,26 @@ from accelerate.utils import set_seed
 import wandb
 
 # Local
-from model.config import config
-from model.model import AudioFlow
-from model.tensors import count_parameters, probability_binary_mask, drop_using_mask, random_interval_masking
+from supervoice_flow.config import config
+from supervoice_flow.model import AudioFlow
+from supervoice_flow.tensors import count_parameters, probability_binary_mask, drop_using_mask, random_interval_masking
 from training.dataset import load_distorted_loader, load_clean_loader
 
 # Train parameters
-train_experiment = "large-02"
+train_experiment = "large-03"
 train_project="supervoice-flow"
 train_datasets = "./external_datasets/librilight-large-processed/"
 train_eval_datasets = [
     "./external_datasets/libritts-r/test-clean/"
 ]
-train_duration = 5 # seconds, 5s x 16 (batches) = 80s per GPU, which is 5s bigger than original paper
+train_duration = 15 # seconds, 15s x 5 (batches) = 75s per GPU
 train_source_experiment = None
 train_auto_resume = True
-train_batch_size = 16 # Per GPU
+train_batch_size = 5 # Per GPU
 train_clean = True
 train_grad_accum_every = 16 # 16x2 = 32 GPU to match paper
 train_steps = 600000 # Directly matches paper
-train_loader_workers = 8
+train_loader_workers = 5
 train_log_every = 1
 train_save_every = 1000
 train_watch_every = 1000
@@ -198,18 +198,24 @@ def main():
 
                     # Masking 
                     # 70% - 100% of the sequence is masked, with segments of at least 10 frames
-                    mask = random_interval_masking(batch_size, seq_len, min_size = 10, min_count = int(seq_len * 0.7), max_count = seq_len, device = device)
+                    mask = random_interval_masking(batch_size, seq_len, 
+                                                   min_size = 10, 
+                                                   min_count = int(seq_len * 0.7), 
+                                                   max_count = seq_len, 
+                                                   device = device)
 
-                    # Prepare condition spec
+                    # Drop everything for unconditional generation
+                    # 0.1 probability of full mask
+                    conditional_drop_mask = probability_binary_mask(shape = (batch_size,), true_prob = 0.1, device = device)
+
+                    # Merge masks
+                    mask = drop_using_mask(source = mask, replacement = True, mask = conditional_drop_mask)
+
+                     # Prepare condition spec
                     if not train_clean:
                         condition_spec = torch.where(mask.unsqueeze(-1), spec_aug, spec)
                     else:
                         condition_spec = drop_using_mask(source = spec, replacement = 0, mask = mask)
-
-                    # Drop everything for unconditional generation
-                    # 0.15 probability of zero spectogram
-                    conditional_drop_mask = probability_binary_mask(shape = (batch_size,), true_prob = 0.15, device = device)
-                    condition_spec = drop_using_mask(source = condition_spec, replacement = 0, mask = conditional_drop_mask)
 
                     # Train step
                     predicted, loss = model(
@@ -224,7 +230,7 @@ def main():
                         # Loss
                         mask = mask, 
                         target = flow,
-                        mask_loss = False # Mathces the paper
+                        mask_loss = True
                     )
 
                     # Backprop
