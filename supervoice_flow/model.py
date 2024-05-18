@@ -128,8 +128,8 @@ class AudioFlow(torch.nn.Module):
         # Prepare
         #
 
-        if mask is None and target is not None:
-            raise ValueError('Mask is required when target is provided')
+        if mask is None and target is not None and mask_loss:
+            raise ValueError('Mask is required when target is provided and mask_loss enabled')
         if target is None and mask is not None:
             raise ValueError('Mask is not required when target is not provided')
 
@@ -190,7 +190,7 @@ class AudioFlow(torch.nn.Module):
                 loss = loss.sum(dim = -1) / n_masked_frames
             else:
                 # Mean loss of expectation over each frame
-                loss = loss.sum(dim = -1) / mask.shape[1]
+                loss = loss.sum(dim = -1) / target.shape[1]
 
             # Expectation over loss of batch
             loss = loss.mean()
