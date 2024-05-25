@@ -114,6 +114,9 @@ class AudioFlow(torch.nn.Module):
         # Audio
         audio, 
         noise, 
+
+        # Extra conditioning for fine-tuning
+        condition = None,
         
         # Time
         times, 
@@ -132,6 +135,10 @@ class AudioFlow(torch.nn.Module):
             raise ValueError('Mask is required when target is provided and mask_loss enabled')
         if target is None and mask is not None:
             raise ValueError('Mask is not required when target is not provided')
+        if condition is not None:
+            assert condition.shape[0] == audio.shape[0], 'Condition should have the same batch size as audio'
+            assert condition.shape[1] == audio.shape[1], 'Condition should have the same sequence length as audio'
+            assert condition.shape[2] == self.config.n_dim, 'Condition should have ' + self.config.n_dim + ' channels'
 
         # Check shapes
         assert audio.shape[0] == noise.shape[0] # Batch
@@ -150,6 +157,10 @@ class AudioFlow(torch.nn.Module):
 
         # Apply transformer input layer
         output = self.transformer_input(output)
+
+        # Apply condition after transformer input
+        if condition is not None:
+            output = output + condition
 
         # Apply sinusoidal positional embedding
         sinu_times = self.sinu_pos_emb(times).unsqueeze(1)
