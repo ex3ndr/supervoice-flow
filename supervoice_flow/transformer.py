@@ -242,7 +242,7 @@ def get_alibi_mask(seq_len, n_heads, cache, device):
         relative_position = torch.abs(relative_position).unsqueeze(0).expand(n_heads, -1,-1)
         alibi = slopes.unsqueeze(1).unsqueeze(1) * relative_position
         alibi = alibi.view(1, n_heads, seq_len, seq_len)
-        alibi_cache[key] = alibi
+        return alibi
 
 
 def rotate_half(x):
