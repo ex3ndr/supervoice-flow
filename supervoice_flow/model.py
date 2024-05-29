@@ -8,7 +8,7 @@ from .transformer import Transformer, ConvPositionEmbed
 from .tensors import drop_using_mask, merge_mask
 
 class AudioFlow(torch.nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, *, cache_alibi = False):
         super(AudioFlow, self).__init__()
         self.config = config.model
 
@@ -30,7 +30,8 @@ class AudioFlow(torch.nn.Module):
             n_dim_ffn = self.config.n_dim_ffn,
             n_non_bias_tokens = 1, # Exclude time embedding from attention bias
             att_dropout = 0,
-            ffn_dropout = 0.1
+            ffn_dropout = 0.1,
+            cache_alibi = cache_alibi
         )
 
         # Prediction

@@ -17,13 +17,15 @@ class Transformer(nn.Module):
         att_dropout, 
         ffn_dropout,
         position_embedding = 'alibi', # or rotary
-        enable_skip_connections = True
+        enable_skip_connections = True,
+        cache_alibi = False
     ):
         super(Transformer, self).__init__()
         self.n_layers = n_layers
         self.n_heads = n_heads
         self.n_non_bias_tokens = n_non_bias_tokens
         self.enable_skip_connections = enable_skip_connections
+        self.cache_alibi = cache_alibi
 
         # Attention blocks
         self.layers = torch.nn.ModuleList([])
@@ -68,7 +70,7 @@ class Transformer(nn.Module):
         # This computes ALiBi bias mask, excluding non-bias tokens which are expected to be appended to the end of the sequence
         # Inspired by: https://github.com/ofirpress/attention_with_linear_biases/issues/5
         if self.position_embedding == 'alibi':
-            alibi = get_alibi_mask(seq_len - self.n_non_bias_tokens, self.n_heads, x.device)
+            alibi = get_alibi_mask(seq_len - self.n_non_bias_tokens, self.n_heads, self.cache_alibi, x.device)
             if self.n_non_bias_tokens > 0:
                 alibi = torch.nn.functional.pad(alibi, (0, self.n_non_bias_tokens, 0, self.n_non_bias_tokens), value=0)
 
@@ -216,11 +218,23 @@ def get_slopes_power_of_2(n_heads, device):
     return slopes_cache[key]
 
 alibi_cache = {}
-def get_alibi_mask(seq_len, n_heads, device):
-    global alibi_cache
-    key = str(seq_len) + "_" + str(n_heads) + "_" + str(device)
+def get_alibi_mask(seq_len, n_heads, cache, device):
+    if cache:
+        global alibi_cache
+        key = str(seq_len) + "_" + str(n_heads) + "_" + str(device)
 
-    if key not in alibi_cache:
+        if key not in alibi_cache:
+            slopes = get_slopes_power_of_2(n_heads, device)
+            context_position = torch.arange(seq_len, device = device)[:, None]
+            memory_position = torch.arange(seq_len, device = device)[None, :]
+            relative_position = memory_position - context_position 
+            relative_position = torch.abs(relative_position).unsqueeze(0).expand(n_heads, -1,-1)
+            alibi = slopes.unsqueeze(1).unsqueeze(1) * relative_position
+            alibi = alibi.view(1, n_heads, seq_len, seq_len)
+            alibi_cache[key] = alibi
+
+        return alibi_cache[key]
+    else:
         slopes = get_slopes_power_of_2(n_heads, device)
         context_position = torch.arange(seq_len, device = device)[:, None]
         memory_position = torch.arange(seq_len, device = device)[None, :]
@@ -229,8 +243,6 @@ def get_alibi_mask(seq_len, n_heads, device):
         alibi = slopes.unsqueeze(1).unsqueeze(1) * relative_position
         alibi = alibi.view(1, n_heads, seq_len, seq_len)
         alibi_cache[key] = alibi
-
-    return alibi_cache[key]
 
 
 def rotate_half(x):
