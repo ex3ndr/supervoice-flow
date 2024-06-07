@@ -29,8 +29,13 @@ def load_clean_sampler(datasets, duration, return_source = False):
     def sample_item():
 
         # Load random audio
-        f = random.choice(files)
-        audio = load_mono_audio(f, config.audio.sample_rate)
+        while True:
+            f = random.choice(files)
+            try:
+                audio = load_mono_audio(f, config.audio.sample_rate)
+                break
+            except:
+                print(f"Error loading {f}")
 
         # Pad or trim audio
         if audio.shape[0] < frames:
