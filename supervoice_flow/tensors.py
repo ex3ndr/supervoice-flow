@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+from einops import rearrange
 import random
 
 class RMSNorm(torch.nn.Module):
@@ -11,6 +12,28 @@ class RMSNorm(torch.nn.Module):
     def forward(self, x):
         return F.normalize(x, dim = -1) * self.scale * self.gamma
     
+class AdaptiveRMSNorm(torch.nn.Module):
+    def __init__(
+        self,
+        dim
+    ):
+        super().__init__()
+        self.scale = dim ** 0.5
+        self.to_gamma = torch.nn.Linear(dim, dim)
+        self.to_beta = torch.nn.Linear(dim, dim)
+
+        # Identity initialization
+        torch.nn.init.zeros_(self.to_gamma.weight)
+        torch.nn.init.ones_(self.to_gamma.bias)
+        torch.nn.init.zeros_(self.to_beta.weight)
+        torch.nn.init.zeros_(self.to_beta.bias)
+
+    def forward(self, x, *, cond):
+        normed = F.normalize(x, dim = -1) * self.scale
+        gamma, beta = self.to_gamma(cond), self.to_beta(cond)
+        gamma, beta = map(lambda t: rearrange(t, 'b d -> b 1 d'), (gamma, beta))
+
+        return normed * gamma + beta
 
 def probability_binary_mask(shape, true_prob, device):
     return torch.zeros(shape, device = device).float().uniform_(0, 1) < true_prob

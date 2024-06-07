@@ -1,6 +1,7 @@
 datasets:
-  - rir-1
-  - lj-speech-1.1
-  - musan
+  # - rir-1
+  # - lj-speech-1.1
+  # - musan
   - libritts-r
-  - librilight-processed@large
+  - librilight-processed
+  # - librilight-processed@large

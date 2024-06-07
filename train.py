@@ -30,9 +30,9 @@ from supervoice_flow.tensors import count_parameters, probability_binary_mask, d
 from training.dataset import load_distorted_loader, load_clean_loader
 
 # Train parameters
-train_experiment = "large-03"
-train_project="supervoice-flow"
-train_datasets = "./external_datasets/librilight-large-processed/"
+train_experiment = "fast-01"
+train_project="supervoice-flow-v2"
+train_datasets = "./external_datasets/librilight-processed/"
 train_eval_datasets = [
     "./external_datasets/libritts-r/test-clean/"
 ]
@@ -74,12 +74,8 @@ def main():
 
     # Prepare dataset
     accelerator.print("Loading dataset...")
-    if train_clean:
-        train_loader = load_clean_loader(datasets = train_datasets, duration = train_duration, num_workers = train_loader_workers, batch_size = train_batch_size)
-        test_loader = load_clean_loader(datasets = train_eval_datasets, duration = train_duration, num_workers = train_loader_workers, batch_size = train_batch_size)
-    else:
-        train_loader = load_distorted_loader(datasets = train_datasets, duration = train_duration, num_workers = train_loader_workers, batch_size = train_batch_size)
-        test_loader = load_distorted_loader(datasets = train_eval_datasets, duration = train_duration, num_workers = train_loader_workers, batch_size = train_batch_size)
+    train_loader = load_clean_loader(datasets = train_datasets, duration = train_duration, num_workers = train_loader_workers, batch_size = train_batch_size)
+    test_loader = load_clean_loader(datasets = train_eval_datasets, duration = train_duration, num_workers = train_loader_workers, batch_size = train_batch_size)
 
     # Prepare model
     accelerator.print("Loading model...")
@@ -175,10 +171,7 @@ def main():
         while successful_cycles < train_grad_accum_every:
             with accelerator.accumulate(model):
                 with accelerator.autocast():
-                    if train_clean:
-                        spec = next(train_cycle)
-                    else:
-                        spec, spec_aug = next(train_cycle)
+                    spec = next(train_cycle)
 
                     # Prepare batch
                     batch_size = spec.shape[0]
@@ -186,8 +179,6 @@ def main():
 
                     # Normalize spectograms
                     spec = (spec - config.audio.norm_mean) / config.audio.norm_std
-                    if not train_clean:
-                        spec_aug = (spec_aug - config.audio.norm_mean) / config.audio.norm_std
 
                     # Prepare target flow (CFM)
                     times = torch.rand((batch_size,), dtype = spec.dtype, device = device)
@@ -212,10 +203,7 @@ def main():
                     mask = drop_using_mask(source = mask, replacement = True, mask = conditional_drop_mask)
 
                      # Prepare condition spec
-                    if not train_clean:
-                        condition_spec = torch.where(mask.unsqueeze(-1), spec_aug, spec)
-                    else:
-                        condition_spec = drop_using_mask(source = spec, replacement = 0, mask = mask)
+                    condition_spec = drop_using_mask(source = spec, replacement = 0, mask = mask)
 
                     # Train step
                     predicted, loss = model(
@@ -228,9 +216,8 @@ def main():
                         times = times, 
 
                         # Loss
-                        mask = mask, 
+                        loss_mask = mask, 
                         target = flow,
-                        mask_loss = True
                     )
 
                     # Backprop

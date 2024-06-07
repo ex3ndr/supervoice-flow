@@ -8,7 +8,7 @@ from .transformer import Transformer, ConvPositionEmbed
 from .tensors import drop_using_mask, merge_mask
 
 class AudioFlow(torch.nn.Module):
-    def __init__(self, config, *, cache_alibi = False):
+    def __init__(self, config):
         super(AudioFlow, self).__init__()
         self.config = config.model
 
@@ -28,10 +28,9 @@ class AudioFlow(torch.nn.Module):
             n_dim = self.config.n_dim,
             n_dim_head = self.config.n_dim_head,
             n_dim_ffn = self.config.n_dim_ffn,
-            n_non_bias_tokens = 1, # Exclude time embedding from attention bias
             att_dropout = 0,
             ffn_dropout = 0.1,
-            cache_alibi = cache_alibi
+            position_embedding = 'alibi',
         )
 
         # Prediction
@@ -123,18 +122,15 @@ class AudioFlow(torch.nn.Module):
         times, 
 
         # Training    
-        mask = None,
+        loss_mask = None,
         target = None,
-        mask_loss = False
     ):
         
         #
         # Prepare
         #
 
-        if mask is None and target is not None and mask_loss:
-            raise ValueError('Mask is required when target is provided and mask_loss enabled')
-        if target is None and mask is not None:
+        if target is None and loss_mask is not None:
             raise ValueError('Mask is not required when target is not provided')
         if condition is not None:
             assert condition.shape[0] == audio.shape[0], 'Condition should have the same batch size as audio'
@@ -145,9 +141,9 @@ class AudioFlow(torch.nn.Module):
         assert audio.shape[0] == noise.shape[0] # Batch
         assert audio.shape[1] == noise.shape[1] # Sequence length
         assert audio.shape[2] == noise.shape[2] # Channels length
-        if mask is not None:
-            assert audio.shape[0] == mask.shape[0] # Batch
-            assert audio.shape[1] == mask.shape[1] # Squence length
+        if loss_mask is not None:
+            assert audio.shape[0] == loss_mask.shape[0] # Batch
+            assert audio.shape[1] == loss_mask.shape[1] # Squence length
 
         #
         # Compute
@@ -164,20 +160,16 @@ class AudioFlow(torch.nn.Module):
             output = output + condition
 
         # Apply sinusoidal positional embedding
-        sinu_times = self.sinu_pos_emb(times).unsqueeze(1)
-        output = torch.cat([output, sinu_times], dim=1)
+        time_embedding = self.sinu_pos_emb(times)
 
         # Apply convolutional positional encoder
         output = self.conv_embed(output) + output
 
         # Run through transformer
-        output = self.transformer(output)
+        output = self.transformer(output, time_embedding)
 
         # Predict durations
         output = self.prediction(output)
-
-        # Cut to length
-        output = output[:, :-1, :]
 
         #
         # Loss
@@ -192,11 +184,11 @@ class AudioFlow(torch.nn.Module):
             loss = reduce(loss, 'b n d -> b n', 'mean')
 
             # Mask out non target frames
-            if mask_loss:
-                loss = loss.masked_fill(~mask, 0.)
+            if loss_mask is not None:
+                loss = loss.masked_fill(~loss_mask, 0.)
 
                 # Number of masked frames
-                n_masked_frames = mask.sum(dim = -1).clamp(min = 1)
+                n_masked_frames = loss_mask.sum(dim = -1).clamp(min = 1)
 
                 # Mean loss of expectation over masked loss
                 loss = loss.sum(dim = -1) / n_masked_frames
