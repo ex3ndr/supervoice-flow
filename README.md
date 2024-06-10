@@ -5,7 +5,7 @@ A base model for voice audio, could be effectively fine-tuned on a single GPU to
 
 Dependencies
 ```
-pip install textgrid einops wandb torchdiffeq flash-attn --no-build-isolation
+pip install accelerate textgrid einops wandb torchdiffeq flash-attn --no-build-isolation
 ```
 
 # Licence 

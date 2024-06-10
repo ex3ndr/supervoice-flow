@@ -41,7 +41,7 @@ train_batch_size = 5 # Per GPU
 train_clean = True
 train_target_gpus = 32 # 16x2 (double batch size) = 32 GPU to match paper
 train_steps = 600000 # Directly matches paper
-train_loader_workers = 32
+train_loader_workers = 64
 train_log_every = 1
 train_save_every = 10
 train_watch_every = 1000
@@ -105,7 +105,8 @@ def main():
     # Save
     def save():
         if train_snapshot_overwrite:
-            fname = str(output_dir / f"{train_experiment}.{step}.pt")
+            fname = str(output_dir / f"{train_experiment}.pt")
+            fname_step = str(output_dir / f"{train_experiment}.{step}.pt")
             torch.save({
 
                 # Model
@@ -116,7 +117,7 @@ def main():
                 'optimizer': optim.state_dict(), 
                 'scheduler': scheduler.state_dict(),
 
-            },  fname)
+            },  fname_step)
             shutil.move(fname_step, fname)
         else:
         
