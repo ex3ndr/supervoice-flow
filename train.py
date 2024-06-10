@@ -27,28 +27,24 @@ import wandb
 from supervoice_flow.config import config
 from supervoice_flow.model import AudioFlow
 from supervoice_flow.tensors import count_parameters, probability_binary_mask, drop_using_mask, random_interval_masking
-from training.dataset import load_distorted_loader, load_clean_loader
+from training.dataset import create_loader
 
 # Train parameters
 train_experiment = "fast-01"
-train_project="supervoice-flow-v2"
-train_datasets = "./external_datasets/librilight-processed/"
-train_eval_datasets = [
-    "./external_datasets/libritts-r/test-clean/"
-]
+train_project="supervoice-flow-remote"
+train_snapshot_overwrite = True
+train_datasets = "https://shared.korshakov.com/training/external_datasets/librilight-large-processed/"
 train_duration = 15 # seconds, 15s x 5 (batches) = 75s per GPU
 train_source_experiment = None
 train_auto_resume = True
 train_batch_size = 5 # Per GPU
 train_clean = True
-train_grad_accum_every = 16 # 16x2 = 32 GPU to match paper
+train_target_gpus = 32 # 16x2 (double batch size) = 32 GPU to match paper
 train_steps = 600000 # Directly matches paper
-train_loader_workers = 5
+train_loader_workers = 32
 train_log_every = 1
-train_save_every = 1000
+train_save_every = 10
 train_watch_every = 1000
-train_evaluate_every = 1
-train_evaluate_batch_size = 10
 train_lr_start = 1e-7
 train_lr_max = 2e-5
 train_warmup_steps = 5000
@@ -60,22 +56,22 @@ train_sigma = 1e-5
 def main():
 
     # Prepare accelerator
+    train_grad_accum_every = train_target_gpus // torch.cuda.device_count()
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
     accelerator = Accelerator(log_with="wandb", kwargs_handlers=[ddp_kwargs], gradient_accumulation_steps = train_grad_accum_every, mixed_precision=train_mixed_precision)
+    accelerator.print(f"Using {torch.cuda.device_count()} GPUs with {train_grad_accum_every} gradient accumulation steps, with total batch size of {torch.cuda.device_count() * train_grad_accum_every}.")
     device = accelerator.device
     output_dir = Path("./output")
     output_dir.mkdir(parents=True, exist_ok=True)
     dtype = torch.float16 if train_mixed_precision == "fp16" else (torch.bfloat16 if train_mixed_precision == "bf16" else torch.float32)
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True 
-    # set_seed(42) enabling this would force each GPU to have same samples
     lr_start = train_lr_start * accelerator.num_processes
     lr_max = train_lr_max * accelerator.num_processes
 
     # Prepare dataset
     accelerator.print("Loading dataset...")
-    train_loader = load_clean_loader(datasets = train_datasets, duration = train_duration, num_workers = train_loader_workers, batch_size = train_batch_size)
-    test_loader = load_clean_loader(datasets = train_eval_datasets, duration = train_duration, num_workers = train_loader_workers, batch_size = train_batch_size)
+    train_loader = create_loader(datasets = train_datasets, duration = train_duration, num_workers = train_loader_workers, batch_size = train_batch_size)
 
     # Prepare model
     accelerator.print("Loading model...")
@@ -90,10 +86,8 @@ def main():
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max = train_steps)
 
     # Accelerate
-    model, optim, train_loader, test_loader = accelerator.prepare(model, optim, train_loader, test_loader)
+    model, optim, train_loader = accelerator.prepare(model, optim, train_loader)
     train_cycle = cycle(train_loader)
-    test_cycle = cycle(test_loader)
-    test_batch = next(test_cycle)
     hps = {
         "train_lr_start": train_lr_start, 
         "train_lr_max": train_lr_max, 
@@ -110,24 +104,40 @@ def main():
 
     # Save
     def save():
+        if train_snapshot_overwrite:
+            fname = str(output_dir / f"{train_experiment}.{step}.pt")
+            torch.save({
+
+                # Model
+                'model': raw_model.state_dict(), 
+
+                # Optimizer
+                'step': step,
+                'optimizer': optim.state_dict(), 
+                'scheduler': scheduler.state_dict(),
+
+            },  fname)
+            shutil.move(fname_step, fname)
+        else:
         
-        # Save step checkpoint
-        fname = str(output_dir / f"{train_experiment}.pt")
-        fname_step = str(output_dir / f"{train_experiment}.{step}.pt")
-        torch.save({
+            # Save step checkpoint
+            fname = str(output_dir / f"{train_experiment}.pt")
+            fname_step = str(output_dir / f"{train_experiment}.{step}.pt")
+            torch.save({
 
-            # Model
-            'model': raw_model.state_dict(), 
+                # Model
+                'model': raw_model.state_dict(), 
 
-            # Optimizer
-            'step': step,
-            'optimizer': optim.state_dict(), 
-            'scheduler': scheduler.state_dict(),
+                # Optimizer
+                'step': step,
+                'optimizer': optim.state_dict(), 
+                'scheduler': scheduler.state_dict(),
 
-        },  fname_step)
+            },  fname_step)
 
-        # Overwrite main checkpoint
-        shutil.copyfile(fname_step, fname)
+            # Copy to latest
+            shutil.copyfile(fname_step, fname)
+            
 
     # Load
     source = None
@@ -242,19 +252,6 @@ def main():
 
         return loss, predicted, flow, lr
 
-    # def train_eval():
-    #     model.eval()
-    #     with torch.inference_mode():
-    #         tokens, style, audio = test_batch
-    #         audio = (audio - config.audio.norm_mean) / config.audio.norm_std
-    #         mask = torch.tokens(audio, device = device)
-    #         predicted = model.sample(tokens = tokens, tokens_style = style, audio = audio, mask = mask)
-    #         score = evaluate_mos(predicted, config.audio.sample_rate)
-    #         gathered_score = accelerator.gather(score).cpu()
-    #         if len(gathered_score.shape) == 0:
-    #             gathered_score = gathered_score.unsqueeze(0)
-    #         return gathered_score.mean().item()
-
     #
     # Start Training
     #
@@ -281,13 +278,6 @@ def main():
                 "target/min": flow.min()
             }, step=step)
             accelerator.print(f'Step {step}: loss={loss}, lr={lr}, time={end - start} sec')
-        
-        # Evaluate
-        # if step % train_evaluate_every == 0:
-        #     accelerator.print("Evaluating...")
-        #     mos = train_eval()
-        #     accelerator.print(f"Step {step}: MOS={mos}")
-        #     accelerator.log({"eval/mos": mos}, step=step)
         
         # Save
         if step % train_save_every == 0 and accelerator.is_main_process:

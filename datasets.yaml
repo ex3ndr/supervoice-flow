@@ -4,4 +4,4 @@ datasets:
   # - musan
   - libritts-r
   - librilight-processed
-  # - librilight-processed@large
+  - librilight-processed@large
