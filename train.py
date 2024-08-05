@@ -230,7 +230,6 @@ def main():
                         loss_mask = mask.to(device, non_blocking=True), 
                         target = flow.to(device, non_blocking=True),
                     )
-                    loss = loss / train_grad_accum_every
 
                 # Backprop
                 optim.zero_grad()
@@ -258,7 +257,7 @@ def main():
                 # Cleanup
                 del loss
 
-        return last_loss.item() * train_grad_accum_every, lr
+        return last_loss.item(), lr
 
     #
     # Start Training
