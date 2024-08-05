@@ -33,9 +33,7 @@ from training.dataset import create_loader
 train_experiment = "flow-01"
 train_project="supervoice-flow-2"
 train_snapshot_overwrite = True
-# train_datasets = "https://shared.korshakov.com/training/external_datasets/librilight-large-processed/"
-# train_datasets = "http://claude.home:8081/training/external_datasets/librilight-large-processed/"
-train_datasets = "./external_datasets/librilight-large-processed/"
+train_datasets = "https://external_datasets.korshakov.com/librilight-large-processed/"
 train_duration = 15 # seconds, 15s x 5 (batches) = 75s per GPU
 train_source_experiment = None
 train_auto_resume = True
@@ -97,8 +95,7 @@ def main():
         "grad_accum_every": train_grad_accum_every,
         "steps": train_steps, 
         "warmup_steps": train_warmup_steps,
-        "mixed_precision": train_mixed_precision,
-        "clip_grad_norm": train_clip_grad_norm,
+        "mixed_precision": train_mixed_precision
     }
     accelerator.init_trackers(train_project, config=hps)
     if accelerator.is_main_process:
