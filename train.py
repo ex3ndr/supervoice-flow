@@ -5,7 +5,6 @@
 # Base
 import itertools
 from glob import glob
-import textgrid
 from tqdm import tqdm
 import time
 from contextlib import nullcontext
