@@ -180,42 +180,42 @@ def main():
         last_loss = 0
         while successful_cycles < train_grad_accum_every:
             with accelerator.accumulate(model):
+                spec = next(train_cycle)
+
+                # Prepare batch
+                batch_size = spec.shape[0]
+                seq_len = spec.shape[1]
+
+                # Normalize spectograms
+                spec = (spec - config.audio.norm_mean) / config.audio.norm_std
+
+                # Prepare target flow (CFM)
+                times = torch.rand((batch_size,), dtype = spec.dtype, device = spec.device)
+                t = rearrange(times, 'b -> b 1 1')
+                source_noise = torch.randn_like(spec, device = spec.device)
+                noise = (1 - (1 - train_sigma) * t) * source_noise + t * spec
+                flow = spec - (1 - train_sigma) * source_noise
+
+                # Masking 
+                # 70% - 100% of the sequence is masked, with segments of at least 10 frames
+                mask = random_interval_masking(batch_size, seq_len, 
+                                                min_size = 10, 
+                                                min_count = int(seq_len * 0.7), 
+                                                max_count = seq_len, 
+                                                device = spec.device)
+
+                # Drop everything for unconditional generation
+                # 0.1 probability of full mask
+                conditional_drop_mask = probability_binary_mask(shape = (batch_size,), true_prob = 0.1, device = spec.device)
+
+                # Merge masks
+                mask = drop_using_mask(source = mask, replacement = True, mask = conditional_drop_mask)
+
+                # Prepare condition spec
+                condition_spec = drop_using_mask(source = spec, replacement = 0, mask = mask)
+
+                # Train step
                 with accelerator.autocast():
-                    spec = next(train_cycle)
-
-                    # Prepare batch
-                    batch_size = spec.shape[0]
-                    seq_len = spec.shape[1]
-
-                    # Normalize spectograms
-                    spec = (spec - config.audio.norm_mean) / config.audio.norm_std
-
-                    # Prepare target flow (CFM)
-                    times = torch.rand((batch_size,), dtype = spec.dtype, device = spec.device)
-                    t = rearrange(times, 'b -> b 1 1')
-                    source_noise = torch.randn_like(spec, device = spec.device)
-                    noise = (1 - (1 - train_sigma) * t) * source_noise + t * spec
-                    flow = spec - (1 - train_sigma) * source_noise
-
-                    # Masking 
-                    # 70% - 100% of the sequence is masked, with segments of at least 10 frames
-                    mask = random_interval_masking(batch_size, seq_len, 
-                                                   min_size = 10, 
-                                                   min_count = int(seq_len * 0.7), 
-                                                   max_count = seq_len, 
-                                                   device = spec.device)
-
-                    # Drop everything for unconditional generation
-                    # 0.1 probability of full mask
-                    conditional_drop_mask = probability_binary_mask(shape = (batch_size,), true_prob = 0.1, device = spec.device)
-
-                    # Merge masks
-                    mask = drop_using_mask(source = mask, replacement = True, mask = conditional_drop_mask)
-
-                     # Prepare condition spec
-                    condition_spec = drop_using_mask(source = spec, replacement = 0, mask = mask)
-
-                    # Train step
                     _, loss = model(
 
                         # Audio
@@ -230,31 +230,31 @@ def main():
                         target = flow.to(device, non_blocking=True),
                     )
 
-                    # Backprop
-                    optim.zero_grad()
-                    accelerator.backward(loss)
-                    if accelerator.sync_gradients:
-                        accelerator.clip_grad_value_(model.parameters(), train_clip_grad_value)
-                    optim.step()
+                # Backprop
+                optim.zero_grad()
+                accelerator.backward(loss)
+                if accelerator.sync_gradients:
+                    accelerator.clip_grad_value_(model.parameters(), train_clip_grad_value)
+                optim.step()
 
-                    # Log skipping step
-                    if optim.step_was_skipped:
-                        failed_steps = failed_steps + 1
-                        if torch.isnan(loss).any():
-                            accelerator.print("Step was skipped with NaN loss")
-                        else:
-                            accelerator.print("Step was skipped")
-                        if failed_steps > 20:
-                            raise Exception("Too many failed steps")
+                # Log skipping step
+                if optim.step_was_skipped:
+                    failed_steps = failed_steps + 1
+                    if torch.isnan(loss).any():
+                        accelerator.print("Step was skipped with NaN loss")
                     else:
-                        successful_cycles = successful_cycles + 1
-                        failed_steps = 0
+                        accelerator.print("Step was skipped")
+                    if failed_steps > 20:
+                        raise Exception("Too many failed steps")
+                else:
+                    successful_cycles = successful_cycles + 1
+                    failed_steps = 0
 
-                    # Save last loss
-                    last_loss = loss.item()
+                # Save last loss
+                last_loss = loss.item()
 
-                    # Cleanup
-                    del loss
+                # Cleanup
+                del loss
 
         return loss, lr
 
