@@ -35,6 +35,26 @@ class AdaptiveRMSNorm(torch.nn.Module):
 
         return normed * gamma + beta
 
+class ConvPositionEmbed(torch.nn.Module):
+    def __init__(self, n_dim, kernel_size):
+        super().__init__()
+        self.dw_conv1d = torch.nn.Sequential(torch.nn.Conv1d(n_dim, n_dim, kernel_size, groups = n_dim, padding = kernel_size // 2), torch.nn.GELU())
+
+    def forward(self, x, mask = None):
+
+        if mask is not None:
+            mask = mask[..., None]
+            x = x.masked_fill(~mask, 0.)
+
+        x = rearrange(x, 'b n c -> b c n')
+        x = self.dw_conv1d(x)
+        out = rearrange(x, 'b c n -> b n c')
+
+        if mask is not None:
+            out = out.masked_fill(~mask, 0.)
+
+        return out
+
 def probability_binary_mask(shape, true_prob, device):
     return torch.zeros(shape, device = device).float().uniform_(0, 1) < true_prob
 

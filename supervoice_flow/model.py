@@ -4,8 +4,8 @@ import torch.nn.functional as F
 from einops import rearrange, reduce, repeat
 from torchdiffeq import odeint
 
-from .transformer import Transformer, ConvPositionEmbed
-from .tensors import drop_using_mask, merge_mask
+from .transformer import Transformer
+from .tensors import drop_using_mask, merge_mask, ConvPositionEmbed
 
 class AudioFlow(torch.nn.Module):
     def __init__(self, config):
@@ -28,9 +28,7 @@ class AudioFlow(torch.nn.Module):
             n_dim = self.config.n_dim,
             n_dim_head = self.config.n_dim_head,
             n_dim_ffn = self.config.n_dim_ffn,
-            att_dropout = 0,
-            ffn_dropout = 0.1,
-            position_embedding = 'alibi',
+            dropout = 0.1,
         )
 
         # Prediction

@@ -17,8 +17,7 @@ config = dict_to_object({
 
     # Audio predictor
     "model": {
-        "n_embeddings": 1024,
-        "n_heads": 16,
+        "n_heads": 32,
         "n_layers": 24,
         "n_dim": 1024,
         "n_dim_head": 64,

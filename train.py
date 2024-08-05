@@ -30,10 +30,12 @@ from supervoice_flow.tensors import count_parameters, probability_binary_mask, d
 from training.dataset import create_loader
 
 # Train parameters
-train_experiment = "fast-01"
-train_project="supervoice-flow-remote"
+train_experiment = "flow-01"
+train_project="supervoice-flow-2"
 train_snapshot_overwrite = True
-train_datasets = "https://shared.korshakov.com/training/external_datasets/librilight-large-processed/"
+# train_datasets = "https://shared.korshakov.com/training/external_datasets/librilight-large-processed/"
+# train_datasets = "http://claude.home:8081/training/external_datasets/librilight-large-processed/"
+train_datasets = "./external_datasets/librilight-large-processed/"
 train_duration = 15 # seconds, 15s x 5 (batches) = 75s per GPU
 train_source_experiment = None
 train_auto_resume = True
@@ -43,13 +45,13 @@ train_target_gpus = 32 # 16x2 (double batch size) = 32 GPU to match paper
 train_steps = 600000 # Directly matches paper
 train_loader_workers = 64
 train_log_every = 1
-train_save_every = 10
+train_save_every = 1000
 train_watch_every = 1000
 train_lr_start = 1e-7
-train_lr_max = 2e-5
+train_lr_max = 5e-5
 train_warmup_steps = 5000
 train_mixed_precision = "fp16" # "bf16" or "fp16" or None
-train_clip_grad_norm = 0.2
+train_clip_grad_value = 0.2
 train_sigma = 1e-5
 
 # Train
@@ -57,7 +59,7 @@ def main():
 
     # Prepare accelerator
     train_grad_accum_every = train_target_gpus // torch.cuda.device_count()
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    ddp_kwargs = DistributedDataParallelKwargs()
     accelerator = Accelerator(log_with="wandb", kwargs_handlers=[ddp_kwargs], gradient_accumulation_steps = train_grad_accum_every, mixed_precision=train_mixed_precision)
     accelerator.print(f"Using {torch.cuda.device_count()} GPUs with {train_grad_accum_every} gradient accumulation steps, with total batch size of {torch.cuda.device_count() * train_grad_accum_every}.")
     device = accelerator.device
@@ -86,7 +88,7 @@ def main():
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max = train_steps)
 
     # Accelerate
-    model, optim, train_loader = accelerator.prepare(model, optim, train_loader)
+    model, optim = accelerator.prepare(model, optim)
     train_cycle = cycle(train_loader)
     hps = {
         "train_lr_start": train_lr_start, 
@@ -192,9 +194,9 @@ def main():
                     spec = (spec - config.audio.norm_mean) / config.audio.norm_std
 
                     # Prepare target flow (CFM)
-                    times = torch.rand((batch_size,), dtype = spec.dtype, device = device)
+                    times = torch.rand((batch_size,), dtype = spec.dtype, device = spec.device)
                     t = rearrange(times, 'b -> b 1 1')
-                    source_noise = torch.randn_like(spec, device=device)
+                    source_noise = torch.randn_like(spec, device = spec.device)
                     noise = (1 - (1 - train_sigma) * t) * source_noise + t * spec
                     flow = spec - (1 - train_sigma) * source_noise
 
@@ -204,11 +206,11 @@ def main():
                                                    min_size = 10, 
                                                    min_count = int(seq_len * 0.7), 
                                                    max_count = seq_len, 
-                                                   device = device)
+                                                   device = spec.device)
 
                     # Drop everything for unconditional generation
                     # 0.1 probability of full mask
-                    conditional_drop_mask = probability_binary_mask(shape = (batch_size,), true_prob = 0.1, device = device)
+                    conditional_drop_mask = probability_binary_mask(shape = (batch_size,), true_prob = 0.1, device = spec.device)
 
                     # Merge masks
                     mask = drop_using_mask(source = mask, replacement = True, mask = conditional_drop_mask)
@@ -220,22 +222,22 @@ def main():
                     predicted, loss = model(
 
                         # Audio
-                        audio = condition_spec, 
-                        noise = noise, 
+                        audio = condition_spec.to(device, non_blocking=True), 
+                        noise = noise.to(device, non_blocking=True), 
 
                         # Time
-                        times = times, 
+                        times = times.to(device, non_blocking=True), 
 
                         # Loss
-                        loss_mask = mask, 
-                        target = flow,
+                        loss_mask = mask.to(device, non_blocking=True), 
+                        target = flow.to(device, non_blocking=True),
                     )
 
                     # Backprop
                     optim.zero_grad()
                     accelerator.backward(loss)
                     if accelerator.sync_gradients:
-                        accelerator.clip_grad_norm_(model.parameters(), train_clip_grad_norm)
+                        accelerator.clip_grad_value_(model.parameters(), train_clip_grad_value)
                     optim.step()
 
                     # Log skipping step

@@ -14,9 +14,7 @@ class Transformer(nn.Module):
         n_dim,
         n_dim_head,
         n_dim_ffn,
-        att_dropout, 
-        ffn_dropout,
-        position_embedding = 'alibi', # or rotary
+        dropout, 
         enable_skip_connections = True
     ):
         super(Transformer, self).__init__()
@@ -32,8 +30,7 @@ class Transformer(nn.Module):
                 n_dim = n_dim, 
                 n_dim_head = n_dim_head, 
                 n_dim_ffn = n_dim_ffn,
-                att_dropout = att_dropout,
-                ffn_dropout = ffn_dropout
+                dropout = dropout,
             ))
         
         # Skip connections
@@ -46,47 +43,24 @@ class Transformer(nn.Module):
         self.output_norm = RMSNorm(n_dim)
 
         # Positional embedding
-        self.position_embedding = position_embedding
-        if position_embedding == 'alibi':
-            self.register_buffer('alibi_slopes', get_slopes_power_of_2(n_heads))
-        elif position_embedding == 'rotary':
-            theta = 50000
-            self.register_buffer('inv_freq', 1.0 / (theta ** (torch.arange(0, n_dim_head, 2).float() / n_dim)))
-        else:
-            raise ValueError(f"Unknown position embedding: {position_embedding}")
+        self.register_buffer('alibi_slopes', get_slopes_power_of_2(n_heads))
 
 
     def forward(self, x, t):
         batch, seq_len, *_ = x.shape
-
-        # Embeddings
-        alibi = None
-        rotational = None
-
-        # Compute ALiBi
-        # This computes ALiBi bias mask, excluding non-bias tokens which are expected to be appended to the end of the sequence
-        # Inspired by: https://github.com/ofirpress/attention_with_linear_biases/issues/5
-        if self.position_embedding == 'alibi':
-            alibi = self.alibi_slopes
-
-        # Compute rotary embeddings
-        if self.position_embedding == 'rotary':
-            rt = torch.arange(seq_len, device = self.inv_freq.device, dtype = self.inv_freq.dtype)
-            freqs = torch.einsum('i , j -> i j', rt, self.inv_freq)
-            rotational =  torch.cat((freqs, freqs), dim = -1)
 
         # Run through attention blocks
         connections = []
         for i in range(self.n_layers):
 
             # Skip connection
-            if self.n_layers - (self.n_layers // 2) < i and self.enable_skip_connections:
+            if self.n_layers - (self.n_layers // 2) <= i and self.enable_skip_connections:
                 s = connections.pop()
                 x = torch.cat([x, s], dim = -1)
                 x = self.skip_combiners[i - (self.n_layers // 2)](x)
 
             # Attention
-            x = self.layers[i](x, t, alibi = alibi, rotational = rotational)
+            x = self.layers[i](x, t, alibi = self.alibi_slopes)
 
             # Skip connection
             if i <= self.n_layers // 2:
@@ -100,12 +74,12 @@ class Transformer(nn.Module):
 
 
 class AttentionBlock(torch.nn.Module):
-    def __init__(self, n_heads, n_dim, n_dim_head, n_dim_ffn, att_dropout, ffn_dropout):
+    def __init__(self, n_heads, n_dim, n_dim_head, n_dim_ffn, dropout):
         super(AttentionBlock, self).__init__()
 
         self.n_heads = n_heads
         self.n_dim_head = n_dim_head
-        self.att_dropout = att_dropout
+        self.dropout = dropout
 
         # Attention input layer norm
         self.attention_ln = AdaptiveRMSNorm(n_dim)
@@ -114,23 +88,17 @@ class AttentionBlock(torch.nn.Module):
         self.attention = nn.Linear(n_dim, 3 * n_dim_head * n_heads, bias=False)
         torch.nn.init.normal_(self.attention.weight, mean=0.0, std=0.02)
 
-        # Attention dropout
-        # self.attention_dropout = nn.Dropout(att_dropout)
-
         # Output flatten multiple heads into single tensor
         self.attention_output = nn.Linear(n_dim_head * n_heads, n_dim, bias=False)
         torch.nn.init.normal_(self.attention_output.weight, mean=0.0, std=0.02)
-
-        # Attention dropout
-        # self.attention_output_dropout = nn.Dropout(dropout)
 
         # MLP part
         self.mlp_ln = AdaptiveRMSNorm(n_dim)
         self.mlp_input = nn.Linear(n_dim, n_dim_ffn)
         self.mlp_output = nn.Linear(n_dim_ffn, n_dim)
-        self.mlp_output_dropout = nn.Dropout(ffn_dropout)
+        self.mlp_output_dropout = nn.Dropout(dropout)
 
-    def forward(self, x, t, alibi = None, rotational = None):
+    def forward(self, x, t, alibi = None):
 
         B, T, C = x.size() # batch size, sequence length, context width
 
@@ -142,22 +110,14 @@ class AttentionBlock(torch.nn.Module):
 
         # Calculation Q/K/V for each head
         q, k, v = self.attention(y).chunk(3, dim = -1)
+
+        # Attention
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b n h d', h = self.n_heads), (q, k, v))
-        
-        # Rotary embedding
-        if rotational is not None:
-            q = apply_rotary_pos_emb(rotational, q)
-            k = apply_rotary_pos_emb(rotational, k)
-
-        # Flash Attention
-        y = flash_attn_func(q, k, v, dropout_p = self.att_dropout if self.training else 0.0, alibi_slopes = alibi)
-
-        # Reassemble all head outputs side by side
-        y = y.transpose(1, 2).contiguous().view(B, T, self.n_heads * self.n_dim_head) # re-assemble all head outputs side by side
+        y = flash_attn_func(q, k, v, alibi_slopes = alibi)
+        y = rearrange(y, 'b n h d -> b n (h d)', h = self.n_heads)
 
         # Output
         y = self.attention_output(y)
-        # y = self.attention_output_dropout(y)
 
         # Residual
         y = residual + y
@@ -167,49 +127,17 @@ class AttentionBlock(torch.nn.Module):
         y = self.mlp_ln(y, cond = t)
         y = self.mlp_input(y)
         y = F.gelu(y)
-        y = self.mlp_output(y)
         y = self.mlp_output_dropout(y)
+        y = self.mlp_output(y)
         y = residual + y
 
         return y
 
 #
-# Convolutional positional embedding
-#
-
-class ConvPositionEmbed(nn.Module):
-    def __init__(self, n_dim, kernel_size):
-        super().__init__()
-        self.dw_conv1d = nn.Sequential(nn.Conv1d(n_dim, n_dim, kernel_size, groups = n_dim, padding = kernel_size // 2), nn.GELU())
-
-    def forward(self, x, mask = None):
-
-        if mask is not None:
-            mask = mask[..., None]
-            x = x.masked_fill(~mask, 0.)
-
-        x = rearrange(x, 'b n c -> b c n')
-        x = self.dw_conv1d(x)
-        out = rearrange(x, 'b c n -> b n c')
-
-        if mask is not None:
-            out = out.masked_fill(~mask, 0.)
-
-        return out
-
-#
-# Embeddings implementation
+# AliBi implementation
 #
 
 def get_slopes_power_of_2(n_heads):
     start = (2**(-2**-(math.log2(n_heads)-3)))
     ratio = start
     return torch.tensor([start*ratio**i for i in range(n_heads)], dtype=torch.float32)
-
-def rotate_half(x):
-    x1, x2 = x.chunk(2, dim = -1)
-    return torch.cat((-x2, x1), dim = -1)
-
-@autocast(enabled = False)
-def apply_rotary_pos_emb(pos, t):
-    return t * pos.cos() + rotate_half(t) * pos.sin()

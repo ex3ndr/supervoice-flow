@@ -15,7 +15,7 @@ def create_sampler(datasets, duration, return_source = False):
     # Load the datasets
     files = []
     if isinstance(datasets, str):
-        if datasets.startswith("https:"):
+        if datasets.startswith("https:") or datasets.startswith("http:"):
             dataset_files = requests.get(datasets + "files_all.txt").text.splitlines()
         else:
             with open(datasets + "files_all.txt", 'r') as file:
