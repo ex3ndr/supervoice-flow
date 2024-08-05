@@ -177,6 +177,7 @@ def main():
         # Load batch
         successful_cycles = 0
         failed_steps = 0
+        last_loss = 0
         while successful_cycles < train_grad_accum_every:
             with accelerator.accumulate(model):
                 with accelerator.autocast():
@@ -215,7 +216,7 @@ def main():
                     condition_spec = drop_using_mask(source = spec, replacement = 0, mask = mask)
 
                     # Train step
-                    predicted, loss = model(
+                    _, loss = model(
 
                         # Audio
                         audio = condition_spec.to(device, non_blocking=True), 
@@ -249,7 +250,13 @@ def main():
                         successful_cycles = successful_cycles + 1
                         failed_steps = 0
 
-        return loss, predicted, flow, lr
+                    # Save last loss
+                    last_loss = loss.item()
+
+                    # Cleanup
+                    del loss
+
+        return loss, lr
 
     #
     # Start Training
@@ -258,7 +265,7 @@ def main():
     accelerator.print("Training started at step", step)
     while step < train_steps:
         start = time.time()
-        loss, predicted, flow, lr = train_step()
+        loss, lr = train_step()
         end = time.time()
 
         # Advance
@@ -269,12 +276,6 @@ def main():
             accelerator.log({
                 "learning_rate": lr,
                 "loss": loss,
-                "predicted/mean": predicted.mean(),
-                "predicted/max": predicted.max(),
-                "predicted/min": predicted.min(),
-                "target/mean": flow.mean(),
-                "target/max": flow.max(),
-                "target/min": flow.min()
             }, step=step)
             accelerator.print(f'Step {step}: loss={loss}, lr={lr}, time={end - start} sec')
         
