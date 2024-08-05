@@ -33,6 +33,7 @@ train_experiment = "flow-01"
 train_project="supervoice-flow-2"
 train_snapshot_overwrite = True
 train_datasets = "https://external_datasets.korshakov.com/librilight-large-processed/"
+# train_datasets = "./external_datasets/librilight-large-processed/"
 train_duration = 15 # seconds, 15s x 5 (batches) = 75s per GPU
 train_source_experiment = None
 train_auto_resume = True
@@ -229,6 +230,7 @@ def main():
                         loss_mask = mask.to(device, non_blocking=True), 
                         target = flow.to(device, non_blocking=True),
                     )
+                    loss = loss / train_grad_accum_every
 
                 # Backprop
                 optim.zero_grad()
@@ -251,12 +253,12 @@ def main():
                     failed_steps = 0
 
                 # Save last loss
-                last_loss = loss.item()
+                last_loss = loss.detach()
 
                 # Cleanup
                 del loss
 
-        return loss, lr
+        return last_loss.item(), lr
 
     #
     # Start Training
