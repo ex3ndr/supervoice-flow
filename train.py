@@ -32,8 +32,8 @@ from training.dataset import create_loader
 train_experiment = "flow-01"
 train_project="supervoice-flow-2"
 train_snapshot_overwrite = True
-# train_datasets = "https://external_datasets.korshakov.com/librilight-large-processed/"
-train_datasets = "./external_datasets/librilight-large-processed/"
+train_datasets = "https://external_datasets.korshakov.com/librilight-large-processed/"
+# train_datasets = "./external_datasets/librilight-large-processed/"
 train_duration = 15 # seconds, 15s x 5 (batches) = 75s per GPU
 train_source_experiment = None
 train_auto_resume = True
