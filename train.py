@@ -49,7 +49,7 @@ train_lr_start = 1e-7
 train_lr_max = 5e-5
 train_warmup_steps = 5000
 train_mixed_precision = "fp16" # "bf16" or "fp16" or None
-train_clip_grad_value = 0.2
+train_clip_grad_norm = 0.2
 train_sigma = 1e-5
 
 # Train
@@ -235,7 +235,7 @@ def main():
                 optim.zero_grad()
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
-                    accelerator.clip_grad_value_(model.parameters(), train_clip_grad_value)
+                    accelerator.clip_grad_norm_(model.parameters(), train_clip_grad_norm)
                 optim.step()
 
                 # Log skipping step
