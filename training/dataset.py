@@ -31,7 +31,6 @@ def create_sampler(datasets, duration, return_source = False):
 
     # Sample a single item
     def sample_item():
-
         # Load random audio
         f = random.choice(files)
         audio = load_mono_audio(f, config.audio.sample_rate)
@@ -63,7 +62,14 @@ def create_sampler(datasets, duration, return_source = False):
         else:
             return spec
 
-    return sample_item
+    def sample_item_retry():
+        while True:
+            try:
+                return sample_item()
+            except Exception as e:
+                print(f"Error: {e}")
+
+    return sample_item_retry
 
 def create_loader(datasets, duration, batch_size, num_workers, return_source = False):
 
