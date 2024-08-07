@@ -78,11 +78,12 @@ def main():
     step = 0
     raw_model = AudioFlow(config)
     model = raw_model
-    wd_params, no_wd_params = [], []
-    for param in model.parameters():
-        param_list = no_wd_params if param.ndim < 2 else wd_params
-        param_list.append(param)
-    optim = torch.optim.AdamW([{'params': wd_params}, {'params': no_wd_params, 'weight_decay': 0}], lr_max, betas=[0.9, 0.99], weight_decay=0.01, eps=1e-7)
+    # wd_params, no_wd_params = [], []
+    # for param in model.parameters():
+    #     param_list = no_wd_params if param.ndim < 2 else wd_params
+    #     param_list.append(param)
+    # optim = torch.optim.AdamW([{'params': wd_params}, {'params': no_wd_params, 'weight_decay': 0}], lr_max, betas=[0.9, 0.99], weight_decay=0.01, eps=1e-7)
+    optim = torch.optim.Adam(lr_max, eps=1e-7)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max = train_steps)
 
     # Accelerate
