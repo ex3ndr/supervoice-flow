@@ -114,6 +114,7 @@ def main():
                 # Optimizer
                 'step': step,
                 'optimizer': optim.state_dict(), 
+                'scaler': accelerator.scaler.state_dict(),
                 'scheduler': scheduler.state_dict(),
 
             },  fname_step)
@@ -131,6 +132,7 @@ def main():
                 # Optimizer
                 'step': step,
                 'optimizer': optim.state_dict(), 
+                'scaler': accelerator.scaler.state_dict(),
                 'scheduler': scheduler.state_dict(),
 
             },  fname_step)
@@ -156,6 +158,7 @@ def main():
         # Optimizer
         optim.load_state_dict(checkpoint['optimizer'])
         scheduler.load_state_dict(checkpoint['scheduler'])
+        accelerator.scaler.load_state_dict(checkpoint['scaler'])
         step = checkpoint['step']
 
         accelerator.print(f'Loaded at #{step}')
@@ -277,6 +280,7 @@ def main():
             accelerator.log({
                 "learning_rate": lr,
                 "loss": loss,
+                "scale": accelerator.scaler.get_scale() if accelerator.scaler is not None else 1.0
             }, step=step)
             accelerator.print(f'Step {step}: loss={loss}, lr={lr}, time={end - start} sec')
         
