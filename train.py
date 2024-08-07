@@ -281,7 +281,7 @@ def main():
         step = step + 1
 
         # Summary
-        if step % train_log_every == 0 and accelerator.is_main_process:
+        if accelerator.is_main_process:
             accelerator.log({
                 "learning_rate": lr,
                 "loss": loss,
