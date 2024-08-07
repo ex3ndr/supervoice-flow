@@ -58,7 +58,7 @@ def main():
     # Prepare accelerator
     train_grad_accum_every = train_target_gpus // torch.cuda.device_count()
     ddp_kwargs = DistributedDataParallelKwargs()
-    accelerator = Accelerator(log_with="wandb", kwargs_handlers=[ddp_kwargs], gradient_accumulation_steps = train_grad_accum_every, mixed_precision=train_mixed_precision)
+    accelerator = Accelerator(log_with="wandb", kwargs_handlers=[ddp_kwargs], mixed_precision=train_mixed_precision)
     accelerator.print(f"Using {torch.cuda.device_count()} GPUs with {train_grad_accum_every} gradient accumulation steps, with total batch size of {torch.cuda.device_count() * train_grad_accum_every}.")
     device = accelerator.device
     output_dir = Path("./output")
@@ -180,13 +180,15 @@ def main():
 
         # Load batch
         failed_steps = 0
-        last_loss = 0
+        loss_accum = 0
         finished = False
         while not finished:
-            for _ in range(train_grad_accum_every):
+            for grad_accum_step in range(train_grad_accum_every):
+                is_last = grad_accum_step == (train_grad_accum_every - 1)
+                context = partial(accelerator.no_sync, model) if not is_last else nullcontext
                 
                 # Run inference
-                with accelerator.accumulate(model):
+                with context():
                     spec = next(train_cycle)
 
                     # Prepare batch
@@ -238,17 +240,20 @@ def main():
                         )
 
                     # Backprop
-                    optim.zero_grad()
-                    accelerator.backward(loss)
-                    if accelerator.sync_gradients:
-                        accelerator.clip_grad_norm_(model.parameters(), train_clip_grad_norm)
-                    optim.step()
+                    accelerator.backward(loss / train_grad_accum_every)
 
-                    # Save last loss
-                    last_loss = loss.detach()
+                    # Append loss
+                    loss_accum = loss_accum + loss.item()
 
                     # Cleanup
                     del loss
+
+            # Normalize gradients
+            accelerator.clip_grad_norm_(model.parameters(), train_clip_grad_norm)
+
+            # Optimize
+            optim.step()
+            optim.zero_grad()
                 
             # Handle end
             if optim.step_was_skipped:
@@ -262,7 +267,7 @@ def main():
             else:
                 finished = True
 
-        return last_loss.item(), lr
+        return loss_accum, lr
 
     #
     # Start Training
