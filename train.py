@@ -43,7 +43,6 @@ train_clean = True
 train_target_gpus = 32 # 16x2 (double batch size) = 32 GPU to match paper
 train_steps = 600000 # Directly matches paper
 train_loader_workers = 64
-train_log_every = 1
 train_save_every = 1000
 train_watch_every = 1000
 train_lr_start = 1e-7
@@ -256,6 +255,7 @@ def main():
             # Handle end
             if optim.step_was_skipped:
                 failed_steps = failed_steps + 1
+                accelerator.print("Scaler " + str(accelerator.scaler.get_scale() if accelerator.scaler is not None else 1.0))
                 if torch.isnan(loss).any():
                     accelerator.print("Step was skipped with NaN loss")
                 else:
