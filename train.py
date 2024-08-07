@@ -8,6 +8,7 @@ from glob import glob
 from tqdm import tqdm
 import time
 from contextlib import nullcontext
+from functools import partial
 import shutil
 from pathlib import Path
 import math
@@ -243,7 +244,7 @@ def main():
                     accelerator.backward(loss / train_grad_accum_every)
 
                     # Append loss
-                    loss_accum = loss_accum + loss.item()
+                    loss_accum = loss_accum + loss.item() / train_grad_accum_every
 
                     # Cleanup
                     del loss
