@@ -95,7 +95,11 @@ class AttentionBlock(torch.nn.Module):
         # MLP part
         self.mlp_ln = AdaptiveRMSNorm(n_dim)
         self.mlp_input = nn.Linear(n_dim, n_dim_ffn)
+        torch.nn.init.normal_(self.mlp_input.weight, mean=0.0, std=0.02)
+        torch.nn.init.zeros_(self.mlp_input.bias)
         self.mlp_output = nn.Linear(n_dim_ffn, n_dim)
+        torch.nn.init.normal_(self.mlp_output.weight, mean=0.0, std=0.02)
+        torch.nn.init.zeros_(self.mlp_output.bias)
         self.mlp_output_dropout = nn.Dropout(dropout)
 
     def forward(self, x, t, alibi = None):

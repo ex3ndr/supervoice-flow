@@ -14,6 +14,8 @@ class AudioFlow(torch.nn.Module):
 
         # Transformer input
         self.transformer_input = torch.nn.Linear(2 * config.audio.n_mels, self.config.n_dim)
+        torch.nn.init.normal_(self.transformer_input.weight, mean=0.0, std=0.02)
+        torch.nn.init.zeros_(self.transformer_input.bias)
 
         # Sinusoidal positional embedding for time
         self.sinu_pos_emb = LearnedSinusoidalPosEmb(self.config.n_dim)
@@ -33,6 +35,8 @@ class AudioFlow(torch.nn.Module):
 
         # Prediction
         self.prediction = torch.nn.Linear(self.config.n_dim, config.audio.n_mels)
+        torch.nn.init.normal_(self.prediction.weight, mean=0.0, std=0.02)
+        torch.nn.init.zeros_(self.prediction.bias)
 
     def sample(self, *, audio, mask = None, steps, alpha = None, return_trajectory = False):
         

@@ -3,6 +3,8 @@ import torch.nn.functional as F
 from einops import rearrange
 import random
 
+norm_eps = 1e-4
+
 class RMSNorm(torch.nn.Module):
     def __init__(self, dim):
         super().__init__()
@@ -10,7 +12,7 @@ class RMSNorm(torch.nn.Module):
         self.gamma = torch.nn.Parameter(torch.ones(dim))
 
     def forward(self, x):
-        return F.normalize(x, dim = -1, eps = 1e-05) * self.scale * self.gamma
+        return F.normalize(x, dim = -1, eps = norm_eps) * self.scale * self.gamma
     
 class AdaptiveRMSNorm(torch.nn.Module):
     def __init__(
@@ -29,7 +31,7 @@ class AdaptiveRMSNorm(torch.nn.Module):
         torch.nn.init.zeros_(self.to_beta.bias)
 
     def forward(self, x, *, cond):
-        normed = F.normalize(x, dim = -1, eps = 1e-05) * self.scale
+        normed = F.normalize(x, dim = -1, eps = norm_eps) * self.scale
         gamma, beta = self.to_gamma(cond), self.to_beta(cond)
         gamma, beta = map(lambda t: rearrange(t, 'b d -> b 1 d'), (gamma, beta))
 
