@@ -248,7 +248,7 @@ def main():
                         accelerator.print("Step was skipped with NaN loss")
                     else:
                         accelerator.print("Step was skipped")
-                    if failed_steps > 20:
+                    if failed_steps > 100:
                         raise Exception("Too many failed steps")
                 else:
                     successful_cycles = successful_cycles + 1
