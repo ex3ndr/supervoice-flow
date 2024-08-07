@@ -246,9 +246,6 @@ def main():
                     # Append loss
                     loss_accum = loss_accum + loss.item() / train_grad_accum_every
 
-                    # Cleanup
-                    del loss
-
             # Normalize gradients
             accelerator.clip_grad_norm_(model.parameters(), train_clip_grad_norm)
 
