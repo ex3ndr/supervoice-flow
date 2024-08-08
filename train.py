@@ -18,6 +18,7 @@ from tqdm import tqdm
 # ML
 import torch
 import torch.nn.functional as F
+from torch.optim.lr_scheduler import LinearLR, SequentialLR, CosineAnnealingLR
 from einops import rearrange, reduce, repeat
 from accelerate import Accelerator, DistributedDataParallelKwargs
 from accelerate.utils import set_seed
@@ -65,9 +66,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     dtype = torch.float16 if train_mixed_precision == "fp16" else (torch.bfloat16 if train_mixed_precision == "bf16" else torch.float32)
     torch.backends.cuda.matmul.allow_tf32 = True
-    torch.backends.cudnn.allow_tf32 = True 
-    lr_start = train_lr_start * accelerator.num_processes
-    lr_max = train_lr_max * accelerator.num_processes
+    torch.backends.cudnn.allow_tf32 = True
 
     # Prepare dataset
     accelerator.print("Loading dataset...")
@@ -83,8 +82,12 @@ def main():
     #     param_list = no_wd_params if param.ndim < 2 else wd_params
     #     param_list.append(param)
     # optim = torch.optim.AdamW([{'params': wd_params}, {'params': no_wd_params, 'weight_decay': 0}], lr_max, betas=[0.9, 0.99], weight_decay=0.01, eps=1e-6)
-    optim = torch.optim.Adam(model.parameters(), lr_max, eps=1e-6)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max = train_steps)
+    optim = torch.optim.Adam(model.parameters(), train_lr_max, eps=1e-6)
+    
+    # Scheduler
+    warmup_scheduler = LinearLR(optim, start_factor=1e-8, end_factor=1.0, total_iters=train_warmup_steps)
+    decay_scheduler = LinearLR(optim, start_factor=1.0, end_factor=1e-8, total_iters=train_steps-train_warmup_steps)
+    scheduler = SequentialLR(optim, schedulers=[warmup_scheduler, decay_scheduler], milestones=[train_warmup_steps])
 
     # Accelerate
     model, optim = accelerator.prepare(model, optim)
@@ -170,14 +173,8 @@ def main():
         model.train()
 
         # Update LR
-        if step < train_warmup_steps:
-            lr = (lr_start + ((lr_max - lr_start) * step) / train_warmup_steps)
-            for param_group in optim.param_groups:
-                param_group['lr'] = lr
-            lr = lr / accelerator.num_processes
-        else:
-            scheduler.step()
-            lr = scheduler.get_last_lr()[0] / accelerator.num_processes
+        scheduler.step()
+        lr = scheduler.get_last_lr()[0]
 
         # Load batch
         failed_steps = 0
