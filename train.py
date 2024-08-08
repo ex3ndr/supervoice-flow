@@ -46,8 +46,7 @@ train_steps = 600000 # Directly matches paper
 train_loader_workers = 64
 train_save_every = 1000
 train_watch_every = 1000
-train_lr_start = 1e-12
-train_lr_max = 2e-5
+train_lr_max = 4e-5
 train_warmup_steps = 5000
 train_mixed_precision = "fp16" # "bf16" or "fp16" or None
 train_clip_grad_norm = 0.2
@@ -93,7 +92,6 @@ def main():
     model, optim = accelerator.prepare(model, optim)
     train_cycle = cycle(train_loader)
     hps = {
-        "train_lr_start": train_lr_start, 
         "train_lr_max": train_lr_max, 
         "batch_size": train_batch_size, 
         "grad_accum_every": train_grad_accum_every,
